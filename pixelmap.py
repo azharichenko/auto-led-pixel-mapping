@@ -1,74 +1,82 @@
 from pathlib import Path
+from typing import Dict, Tuple, List
 
 import numpy as np
 import cv2
 import imutils
 
-cap = cv2.VideoCapture(0)
-temp  = None
+import serial
+import time
 
-def locate_led_coord()
+RED = [1, 0, 0]
+BLACK = [0, 0, 0]
 
 
-def write_to_csv():
-    output = Path.cwd() / "output.csv"
-    exit()
+def draw_calibration_pixel(led_number, retries=3):
+    with serial.Serial("COM3", baudrate=2152000, parity=serial.PARITY_EVEN, stopbits=serial.STOPBITS_ONE) as ser:
+        for _ in range(retries):
+            ser.write(bytearray(BLACK * led_number + RED + BLACK * (299 - led_number)))
+            time.sleep(0.3)
 
-while(True):
-    # Capture frame-by-frame
-    ret, frame = cap.read()
 
-    # Our operations on the frame come here
-    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+LED_NUM = 300
+output = Path.cwd() / "led_pos.csv"
 
-    # hsv = cv2.GaussianBlur(hsv, (7, 7), 0)
 
-    # define range of blue color in HSV
-    lower_blue = np.array([0, 110, 130])
-    upper_blue = np.array([10, 255, 255])
+def locate_led_coord(cap, frames=10):
+    accum_frame = None
+    for _ in range(frames):
+        # Capture frame-by-frame
+        _, frame = cap.read()
 
-    # Threshold the HSV image to get only blue colors
-    mask = cv2.inRange(hsv, lower_blue, upper_blue)
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        lower_red = np.array([0, 110, 130])
+        upper_red = np.array([10, 255, 255])
+        mask = cv2.inRange(hsv, lower_red, upper_red)
 
-    # Bitwise-AND mask and original image
-    res = cv2.bitwise_and(frame, frame, mask=mask)
-    res = cv2.cvtColor(res, cv2.COLOR_HSV2RGB)
-    res = cv2.cvtColor(res, cv2.COLOR_RGB2GRAY)
+        # Bitwise-AND mask and original image
+        res = cv2.bitwise_and(frame, frame, mask=mask)
+        res = cv2.cvtColor(res, cv2.COLOR_HSV2RGB)
+        res = cv2.cvtColor(res, cv2.COLOR_RGB2GRAY)
 
-    ret, res = cv2.threshold(res, 1, 255, cv2.THRESH_BINARY)
+        ret, res = cv2.threshold(res, 1, 255, cv2.THRESH_BINARY)
 
-    if temp is None:
-        temp = res
-    else:
-        temp += res
-        blurred = cv2.GaussianBlur(temp, (5, 5), 0)
-        thresh = cv2.threshold(blurred, 60, 255, cv2.THRESH_BINARY)[1]
+        if accum_frame is None:
+            accum_frame = res
+        else:
+            accum_frame += res
+    blurred = cv2.GaussianBlur(accum_frame, (5, 5), 0)
+    thresh = cv2.threshold(blurred, 60, 255, cv2.THRESH_BINARY)[1]
 
-        # find contours in the thresholded image
-        cnts = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL,
-                                cv2.CHAIN_APPROX_SIMPLE)
-        cnts = imutils.grab_contours(cnts)
+    # find contours in the thresholded image
+    cnts = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL,
+                            cv2.CHAIN_APPROX_SIMPLE)
+    cnts = imutils.grab_contours(cnts)
 
-        if len(cnts) == 300:
-            # write_to_csv(cnts)
-            pass
-        # loop over the contours
-        for c in cnts:
-            # compute the center of the contour
-            M = cv2.moments(c)
-            if M["m00"] == 0.0:
-                continue
-            cX = int(M["m10"] / M["m00"])
-            cY = int(M["m01"] / M["m00"])
-            # draw the contour and center of the shape on the image
-            cv2.drawContours(res, [c], -1, (0, 255, 0), 2)
-            cv2.circle(res, (cX, cY), 7, (255, 255, 255), -1)
+    # assert len(cnts) == 1
 
-    # Display the resulting frame
-    cv2.imshow('res', cv2.GaussianBlur(res, (5,5), 0))
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
+    # loop over the contours
+    for c in cnts:
+        # compute the center of the contour
+        M = cv2.moments(c)
+        if M["m00"] == 0:
+            continue
+        cX = int(M["m10"] / M["m00"])
+        cY = int(M["m01"] / M["m00"])
+        return (cX, cY)
 
-# When everything done, release the capture
-cap.release()
-cv2.destroyAllWindows()
+
+
+
+if __name__ == "__main__":
+    cap = cv2.VideoCapture(0)
+    with output.open("w") as f:
+        for led_index in range(LED_NUM):
+            draw_calibration_pixel(led_index)
+            x, y = locate_led_coord(cap)
+            f.write("{},{},{}\n".format(led_index, x, y))
+            print(led_index, x, y)
+
+    # When everything done, release the capture
+    cap.release()
+    cv2.destroyAllWindows()
