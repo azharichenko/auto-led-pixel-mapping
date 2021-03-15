@@ -9,6 +9,7 @@ verify_ssl = true
 numpy = "*"
 opencv-contrib-python = "*"
 pyserial = "*"
+imutils = "*"
 
 [requires]
 python_version = "3.8"
